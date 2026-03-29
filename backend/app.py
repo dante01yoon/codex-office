@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 import time
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
@@ -151,6 +152,68 @@ def get_activity():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.route("/git-status", methods=["GET"])
+def git_status():
+    """Return current branch, changed files, and recent commits."""
+    # Determine working directory: use cwd from first active agent, else codex-office dir
+    cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        agents = load_agents()
+        active = [a for a in agents if a.get("state") in ("coding", "thinking", "searching")]
+        if active and active[0].get("cwd"):
+            cwd = active[0]["cwd"]
+    except Exception:
+        pass
+
+    def run_git(cmd):
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, timeout=5
+        )
+        return result.stdout.strip()
+
+    try:
+        # Current branch
+        branch = run_git(["git", "branch", "--show-current"])
+
+        # Changed files via porcelain output
+        porcelain = run_git(["git", "status", "--porcelain"])
+        files = []
+        if porcelain:
+            for line in porcelain.splitlines():
+                status_code = line[:2].strip()
+                path = line[3:]
+                status_map = {
+                    "M": "modified",
+                    "A": "added",
+                    "D": "deleted",
+                    "R": "renamed",
+                    "C": "copied",
+                    "??": "untracked",
+                    "MM": "modified",
+                    "AM": "modified",
+                }
+                status = status_map.get(status_code, "modified")
+                files.append({"path": path, "status": status})
+
+        # Recent commits
+        log_output = run_git(["git", "log", "--oneline", "-5"])
+        commits = []
+        if log_output:
+            for line in log_output.splitlines():
+                parts = line.split(" ", 1)
+                if len(parts) == 2:
+                    commits.append({"hash": parts[0], "message": parts[1]})
+
+        return jsonify({"branch": branch, "files": files, "commits": commits})
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git command timed out"}), 504
+    except FileNotFoundError:
+        return jsonify({"error": "Git not found"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":

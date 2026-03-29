@@ -179,6 +179,92 @@ body {
 .state-idle { background: #8b949e22; color: #8b949e; }
 .state-error { background: #f8514922; color: #f85149; }
 
+/* Git Status Panel */
+#git-panel {
+  flex: 0 0 auto;
+  max-height: 30%;
+}
+
+#git-status {
+  padding: 4px 0;
+  overflow-y: auto;
+  font-size: 11px;
+}
+
+.git-branch {
+  padding: 6px 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f6feb;
+  border-bottom: 1px solid #21262d;
+}
+
+.git-branch::before {
+  content: '\2387 ';
+  opacity: 0.6;
+}
+
+.git-section-label {
+  padding: 4px 12px 2px;
+  font-size: 10px;
+  color: #6e7681;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.git-file {
+  padding: 2px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.git-file .git-file-status {
+  font-size: 9px;
+  font-weight: 700;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.git-file .git-file-path {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #e6edf3;
+}
+
+.git-file-status.added { color: #3fb950; }
+.git-file-status.untracked { color: #3fb950; }
+.git-file-status.modified { color: #d29922; }
+.git-file-status.renamed { color: #d29922; }
+.git-file-status.deleted { color: #f85149; }
+
+.git-commit {
+  padding: 2px 12px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 11px;
+}
+
+.git-commit .git-hash {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: #6e7681;
+  flex-shrink: 0;
+}
+
+.git-commit .git-msg {
+  color: #8b949e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Activity Log */
 #log-panel {
   flex: 1;
