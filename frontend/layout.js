@@ -137,6 +137,7 @@ const FURNITURE = {
   window: { x: 100, y: 80, w: 240, h: 120 },
   clock: { x: 780, y: 100 },
   door: { x: 830, y: 600 },
+  contextMeter: { x: 1080, y: 260, w: 30, h: 80 },
 };
 
 // Depth layers

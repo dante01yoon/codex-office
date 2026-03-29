@@ -19,6 +19,7 @@ class OfficeScene extends Phaser.Scene {
     this.elevatorDoors = null; // { left, right, light, open }
     this.elevatorBusy = false; // lock to serialize elevator usage
     this.elevatorQueue = [];   // queued callbacks waiting for elevator
+    this.contextMeter = null;  // context window gauge refs
   }
 
   create() {
@@ -56,6 +57,15 @@ class OfficeScene extends Phaser.Scene {
     this.gitPollTimer = this.time.addEvent({
       delay: 15000,
       callback: this.pollGitStatus,
+      callbackScope: this,
+      loop: true,
+    });
+
+    // Start context usage polling (every 10s)
+    this.pollContextUsage();
+    this.contextPollTimer = this.time.addEvent({
+      delay: 10000,
+      callback: this.pollContextUsage,
       callbackScope: this,
       loop: true,
     });
@@ -146,6 +156,7 @@ class OfficeScene extends Phaser.Scene {
     this.drawPlants(g);
     this.drawElevator();
     this.drawPosters(g);
+    this.drawContextMeter();
     this.drawZoneLabels();
   }
 
@@ -664,6 +675,165 @@ class OfficeScene extends Phaser.Scene {
         fontSize: '6px', fontFamily: 'monospace', color: '#0d1117',
       }).setOrigin(0.5, 0.5).setDepth(DEPTH.furnitureBg + 1);
     });
+  }
+
+  drawContextMeter() {
+    const cm = FURNITURE.contextMeter;
+    const mg = this.add.graphics();
+    mg.setDepth(DEPTH.furnitureBg + 1);
+
+    // Outer frame (dark border)
+    mg.fillStyle(0x21262d);
+    mg.fillRect(cm.x - 2, cm.y - 2, cm.w + 4, cm.h + 4);
+
+    // Inner background (empty meter area)
+    mg.fillStyle(0x0d1117);
+    mg.fillRect(cm.x, cm.y, cm.w, cm.h);
+
+    // Tick marks on the side
+    mg.lineStyle(1, 0x484f58, 0.5);
+    for (let i = 0; i <= 4; i++) {
+      const tickY = cm.y + cm.h - (i / 4) * cm.h;
+      mg.lineBetween(cm.x - 2, tickY, cm.x, tickY);
+      mg.lineBetween(cm.x + cm.w, tickY, cm.x + cm.w + 2, tickY);
+    }
+
+    // Compact limit marker (dashed line at 90%)
+    const compactY = cm.y + cm.h - 0.9 * cm.h;
+    mg.lineStyle(1, 0xd29922, 0.6);
+    for (let dx = 0; dx < cm.w; dx += 4) {
+      mg.lineBetween(cm.x + dx, compactY, cm.x + dx + 2, compactY);
+    }
+
+    // Fill bar (starts empty, will be updated)
+    const fill = this.add.graphics();
+    fill.setDepth(DEPTH.furnitureBg + 2);
+
+    // Percentage text above meter
+    const pctText = this.add.text(cm.x + cm.w / 2, cm.y - 12, '0%', {
+      fontSize: '9px',
+      fontFamily: 'monospace',
+      color: '#3fb950',
+      fontStyle: 'bold',
+    }).setOrigin(0.5, 0.5).setDepth(DEPTH.furnitureBg + 2);
+
+    // "CONTEXT" label below meter
+    this.add.text(cm.x + cm.w / 2, cm.y + cm.h + 12, 'CONTEXT', {
+      fontSize: '7px',
+      fontFamily: 'monospace',
+      color: '#6e7681',
+      letterSpacing: 1,
+    }).setOrigin(0.5, 0.5).setDepth(DEPTH.furnitureBg + 1);
+
+    // Token count text below label
+    const tokenText = this.add.text(cm.x + cm.w / 2, cm.y + cm.h + 24, '0 / 1M', {
+      fontSize: '6px',
+      fontFamily: 'monospace',
+      color: '#484f58',
+    }).setOrigin(0.5, 0.5).setDepth(DEPTH.furnitureBg + 1);
+
+    // Store references
+    this.contextMeter = {
+      fill,
+      pctText,
+      tokenText,
+      x: cm.x,
+      y: cm.y,
+      w: cm.w,
+      h: cm.h,
+      currentPct: 0,
+      glowEffect: null,
+    };
+  }
+
+  async pollContextUsage() {
+    try {
+      const res = await fetch('http://localhost:19000/context-usage');
+      if (!res.ok) return;
+      const data = await res.json();
+      this.updateContextMeter(data);
+    } catch (e) {
+      // Server not running or endpoint unavailable, silently ignore
+    }
+  }
+
+  updateContextMeter(data) {
+    const meter = this.contextMeter;
+    if (!meter) return;
+
+    const pct = Math.min(data.percentage || 0, 100);
+    const tokensUsed = data.tokens_used || 0;
+    const contextWindow = data.context_window || 1000000;
+
+    // Determine color based on percentage thresholds
+    let color;
+    let colorHex;
+    if (pct <= 50) {
+      color = 0x3fb950; colorHex = '#3fb950'; // green
+    } else if (pct <= 75) {
+      color = 0xd29922; colorHex = '#d29922'; // yellow
+    } else if (pct <= 90) {
+      color = 0xdb6d28; colorHex = '#db6d28'; // orange
+    } else {
+      color = 0xf85149; colorHex = '#f85149'; // red
+    }
+
+    // Animate fill level
+    const targetH = (pct / 100) * meter.h;
+    const targetY = meter.y + meter.h - targetH;
+
+    // Use a tween on a dummy object to animate the fill redraw
+    const tweenTarget = { fillH: (meter.currentPct / 100) * meter.h };
+    this.tweens.add({
+      targets: tweenTarget,
+      fillH: targetH,
+      duration: 600,
+      ease: 'Power2',
+      onUpdate: () => {
+        meter.fill.clear();
+        meter.fill.fillStyle(color, 0.85);
+        const currentH = tweenTarget.fillH;
+        const currentY = meter.y + meter.h - currentH;
+        meter.fill.fillRect(meter.x + 1, currentY, meter.w - 2, currentH);
+
+        // Glossy highlight
+        meter.fill.fillStyle(0xffffff, 0.08);
+        meter.fill.fillRect(meter.x + 2, currentY, 4, currentH);
+      },
+    });
+    meter.currentPct = pct;
+
+    // Update text
+    const formatTokens = (n) => {
+      if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+      if (n >= 1000) return Math.round(n / 1000) + 'K';
+      return String(n);
+    };
+    meter.pctText.setText(Math.round(pct) + '%');
+    meter.pctText.setColor(colorHex);
+    meter.tokenText.setText(formatTokens(tokensUsed) + ' / ' + formatTokens(contextWindow));
+
+    // Pulsing red glow when > 90%
+    if (pct > 90 && !meter.glowEffect) {
+      const glow = this.add.graphics();
+      glow.setDepth(DEPTH.furnitureBg + 3);
+      glow.fillStyle(0xf85149, 0.15);
+      glow.fillRect(meter.x - 4, meter.y - 4, meter.w + 8, meter.h + 8);
+      meter.glowEffect = glow;
+
+      this.tweens.add({
+        targets: glow,
+        alpha: 0.3,
+        duration: 600,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    } else if (pct <= 90 && meter.glowEffect) {
+      // Remove glow effect when back under threshold
+      meter.glowEffect.destroy();
+      meter.glowEffect = null;
+    }
   }
 
   drawZoneLabels() {

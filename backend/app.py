@@ -357,6 +357,61 @@ def get_conversation():
     return jsonify(entries)
 
 
+@app.route("/context-usage", methods=["GET"])
+def context_usage():
+    """Return context window utilization for the most recent active thread."""
+    home = os.path.expanduser("~")
+    db_path = os.path.join(home, ".codex", "state_5.sqlite")
+    config_path = os.path.join(home, ".codex", "config.toml")
+
+    # Defaults
+    context_window = 1000000
+    compact_limit = 900000
+
+    # Try to read context_window from config.toml
+    try:
+        with open(config_path, "r") as f:
+            for line in f:
+                m = re.match(r"^\s*model_context_window\s*=\s*(\d+)", line)
+                if m:
+                    context_window = int(m.group(1))
+                m2 = re.match(r"^\s*model_auto_compact_token_limit\s*=\s*(\d+)", line)
+                if m2:
+                    compact_limit = int(m2.group(1))
+    except Exception:
+        pass
+
+    # Read tokens_used from the most recent non-archived thread
+    tokens_used = 0
+    thread_title = ""
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT tokens_used, title FROM threads "
+            "WHERE archived = 0 OR archived IS NULL "
+            "ORDER BY updated_at DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        if row:
+            tokens_used = row["tokens_used"] or 0
+            thread_title = row["title"] or ""
+        conn.close()
+    except Exception:
+        pass
+
+    percentage = round((tokens_used / context_window) * 100, 1) if context_window > 0 else 0
+
+    return jsonify({
+        "tokens_used": tokens_used,
+        "context_window": context_window,
+        "compact_limit": compact_limit,
+        "percentage": percentage,
+        "thread_title": thread_title,
+    })
+
+
 if __name__ == "__main__":
     # Initialize empty agents file
     if not os.path.exists(AGENTS_FILE):
