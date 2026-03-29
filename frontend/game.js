@@ -69,6 +69,15 @@ class OfficeScene extends Phaser.Scene {
       callbackScope: this,
       loop: true,
     });
+
+    // Start whiteboard polling (every 5s)
+    this.pollWhiteboard();
+    this.whiteboardPollTimer = this.time.addEvent({
+      delay: 5000,
+      callback: this.pollWhiteboard,
+      callbackScope: this,
+      loop: true,
+    });
   }
 
   update(time) {
@@ -242,26 +251,24 @@ class OfficeScene extends Phaser.Scene {
     wg.fillStyle(COLORS.whiteboard);
     wg.fillRect(wb.x, wb.y, wb.w, wb.h);
 
-    // Some "writing" on the board
-    wg.fillStyle(0x10a37f);
-    wg.fillRect(wb.x + 15, wb.y + 12, 60, 3);
-    wg.fillRect(wb.x + 15, wb.y + 22, 80, 3);
-    wg.fillRect(wb.x + 15, wb.y + 32, 45, 3);
+    // Initialize the interactive whiteboard system
+    WhiteboardManager.init(this);
 
-    wg.fillStyle(0xf85149);
-    wg.fillRect(wb.x + 110, wb.y + 12, 40, 3);
-    wg.fillRect(wb.x + 110, wb.y + 22, 55, 3);
+    // Click handler: cycle mode when clicking inside the whiteboard area
+    this.input.on('pointerdown', (pointer) => {
+      const px = pointer.x;
+      const py = pointer.y;
+      if (px >= wb.x && px <= wb.x + wb.w &&
+          py >= wb.y && py <= wb.y + wb.h) {
+        WhiteboardManager.nextMode();
+      }
+    });
 
-    wg.fillStyle(0x1f6feb);
-    wg.fillRect(wb.x + 15, wb.y + 48, 70, 3);
-    wg.fillRect(wb.x + 15, wb.y + 58, 50, 3);
-
-    // "CODEX" title
-    const title = this.add.text(wb.x + wb.w / 2, wb.y + 6, 'SPRINT', {
-      fontSize: '8px',
-      fontFamily: 'monospace',
-      color: '#484f58',
-    }).setOrigin(0.5, 0).setDepth(DEPTH.furnitureBg + 1);
+    // Keyboard handlers: keys 1-4 switch whiteboard modes directly
+    this.input.keyboard.on('keydown-ONE',   () => WhiteboardManager.setMode(0));
+    this.input.keyboard.on('keydown-TWO',   () => WhiteboardManager.setMode(1));
+    this.input.keyboard.on('keydown-THREE', () => WhiteboardManager.setMode(2));
+    this.input.keyboard.on('keydown-FOUR',  () => WhiteboardManager.setMode(3));
   }
 
   drawServerRack(g) {
@@ -752,6 +759,17 @@ class OfficeScene extends Phaser.Scene {
       if (!res.ok) return;
       const data = await res.json();
       this.updateContextMeter(data);
+    } catch (e) {
+      // Server not running or endpoint unavailable, silently ignore
+    }
+  }
+
+  async pollWhiteboard() {
+    try {
+      const res = await fetch('http://localhost:19000/whiteboard');
+      if (!res.ok) return;
+      const data = await res.json();
+      WhiteboardManager.render(WhiteboardManager.currentMode, data);
     } catch (e) {
       // Server not running or endpoint unavailable, silently ignore
     }
