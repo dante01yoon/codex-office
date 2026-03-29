@@ -41,10 +41,65 @@ class OfficeScene extends Phaser.Scene {
     // Start ambient animations
     this.startAmbientAnimations();
 
-    // Start polling backend
+    // WebSocket connection
+    this.socket = io('http://localhost:19000', {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1000,
+    });
+
+    this.socket.on('connect', () => {
+      console.log('[WS] Connected');
+    });
+
+    this.socket.on('agents_updated', (data) => {
+      if (data.agents) {
+        this.syncAgents(data.agents);
+        this.updateUI(data.agents);
+        this.updateStats(data.agents);
+      }
+    });
+
+    this.socket.on('agent_left', (data) => {
+      if (data.agents) {
+        this.syncAgents(data.agents);
+        this.updateUI(data.agents);
+        this.updateStats(data.agents);
+      }
+    });
+
+    this.socket.on('activity', (entry) => {
+      // Prepend to activity log
+      const el = document.getElementById('activity-log');
+      if (el) {
+        const emptyState = el.querySelector('.empty-state');
+        if (emptyState) emptyState.remove();
+        const div = document.createElement('div');
+        div.className = 'log-entry';
+        div.innerHTML = `
+            <span class="log-time">${entry.time}</span>
+            <span class="log-agent">${entry.agent_id}</span>
+            <span class="log-state state-badge state-${entry.state}">${entry.state}</span>
+            <span class="log-task">${entry.task || ''}</span>
+        `;
+        el.prepend(div);
+        // Keep max 50 entries
+        while (el.children.length > 50) el.removeChild(el.lastChild);
+      }
+    });
+
+    this.socket.on('disconnect', () => {
+      console.log('[WS] Disconnected, falling back to polling');
+    });
+
+    // Start polling backend (fallback when WebSocket is disconnected)
     this.pollTimer = this.time.addEvent({
-      delay: 500,
-      callback: this.pollAgents,
+      delay: 2000,
+      callback: () => {
+        if (!this.socket || !this.socket.connected) {
+          this.pollAgents();
+        }
+      },
       callbackScope: this,
       loop: true,
     });

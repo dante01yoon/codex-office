@@ -10,9 +10,11 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 
 app = Flask(__name__, static_folder=None)
 CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 AGENTS_FILE = os.path.join(os.path.dirname(__file__), "agents.json")
 STALE_TIMEOUT = 120  # seconds before auto-idle
@@ -47,6 +49,14 @@ def add_log(agent_id, state, task=""):
     activity_log.insert(0, entry)
     if len(activity_log) > MAX_LOG_ENTRIES:
         activity_log.pop()
+    broadcast_update('activity', entry)
+
+
+def broadcast_update(event_type, data=None):
+    """Push real-time update to all connected clients."""
+    if data is None:
+        data = {}
+    socketio.emit(event_type, data)
 
 
 def cleanup_stale_agents(agents):
@@ -134,6 +144,7 @@ def update_agent_state():
         add_log(agent_id, "joined", f"New agent ({state})")
 
     save_agents(agents)
+    broadcast_update('agents_updated', {"agents": load_agents()})
     return jsonify({"status": "ok"})
 
 
@@ -145,6 +156,7 @@ def agent_leave():
     agents = [a for a in agents if a["id"] != agent_id]
     save_agents(agents)
     add_log(agent_id, "left", "Process exited")
+    broadcast_update('agent_left', {"id": agent_id, "agents": load_agents()})
     return jsonify({"status": "ok"})
 
 
@@ -588,8 +600,19 @@ def context_usage():
     })
 
 
+@socketio.on('connect')
+def handle_connect():
+    # Send current state on connect
+    emit('agents_updated', {"agents": load_agents()})
+
+
+@socketio.on('request_refresh')
+def handle_refresh():
+    emit('agents_updated', {"agents": load_agents()})
+
+
 if __name__ == "__main__":
     # Initialize empty agents file
     if not os.path.exists(AGENTS_FILE):
         save_agents([])
-    app.run(host="0.0.0.0", port=19000, debug=False)
+    socketio.run(app, host="0.0.0.0", port=19000, debug=False, allow_unsafe_werkzeug=True)
