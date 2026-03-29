@@ -4,3 +4,5 @@ backend/agents.json
 .DS_Store
 *.sqlite
 *.log
+*.err
+logs/
