@@ -78,6 +78,15 @@ class OfficeScene extends Phaser.Scene {
       callbackScope: this,
       loop: true,
     });
+
+    // Start MCP activity polling (every 3s)
+    this.pollMCPActivity();
+    this.mcpPollTimer = this.time.addEvent({
+      delay: 3000,
+      callback: this.pollMCPActivity,
+      callbackScope: this,
+      loop: true,
+    });
   }
 
   update(time) {
@@ -992,6 +1001,9 @@ class OfficeScene extends Phaser.Scene {
       isSubagent: agentData.is_subagent || false,
       nickname: agentData.nickname || '',
       agentRole: agentData.agent_role || '',
+      mcpBadge: null,
+      mcpService: null,
+      mcpTimeout: null,
     };
 
     if (agent.isSubagent) {
@@ -1090,6 +1102,14 @@ class OfficeScene extends Phaser.Scene {
             await this.closeElevator();
 
             // 5. Destroy agent sprites now that they are hidden
+            if (agent.mcpBadge) {
+              agent.mcpBadge.destroy();
+              agent.mcpBadge = null;
+            }
+            if (agent.mcpTimeout) {
+              clearTimeout(agent.mcpTimeout);
+              agent.mcpTimeout = null;
+            }
             agent.sprite.destroy();
             agent.nameTag.destroy();
             if (agent.bubble) {
@@ -1292,6 +1312,11 @@ class OfficeScene extends Phaser.Scene {
         agent.walkTimer = 0;
         agent.sprite.setFrame(agent.sprite.frame.name === 5 ? 0 : 5);
       }
+    }
+
+    // Update MCP badge position to follow the character
+    if (agent.mcpBadge) {
+      agent.mcpBadge.setPosition(agent.sprite.x, agent.sprite.y - 58);
     }
 
     // Periodic random bubbles
@@ -1505,6 +1530,69 @@ class OfficeScene extends Phaser.Scene {
   }
 
   // ========================================
+  // MCP Activity Polling
+  // ========================================
+
+  async pollMCPActivity() {
+    try {
+      const res = await fetch('http://localhost:19000/mcp-activity');
+      if (!res.ok) return;
+      const data = await res.json();
+      // data is expected to be an object mapping agentId -> { service, timestamp }
+      // or an array of { agent_id, service, timestamp }
+      const mcpMap = {};
+      if (Array.isArray(data)) {
+        data.forEach(entry => {
+          mcpMap[entry.agent_id] = entry;
+        });
+      } else if (data && typeof data === 'object') {
+        Object.assign(mcpMap, data);
+      }
+
+      const now = Date.now();
+
+      Object.values(this.agents).forEach(agent => {
+        const mcpEntry = mcpMap[agent.id];
+        if (mcpEntry && mcpEntry.service) {
+          const serviceName = mcpEntry.service;
+          // Agent has active MCP activity
+          if (!agent.mcpBadge || agent.mcpService !== serviceName) {
+            // Remove old badge if service changed
+            if (agent.mcpBadge) {
+              MCPIcons.removeBadge(this, agent.mcpBadge);
+              agent.mcpBadge = null;
+            }
+            // Create new badge
+            agent.mcpBadge = MCPIcons.createBadge(
+              this,
+              agent.sprite.x,
+              agent.sprite.y - 58,
+              serviceName
+            );
+            agent.mcpService = serviceName;
+          }
+          // Reset timeout since activity is still active
+          if (agent.mcpTimeout) {
+            clearTimeout(agent.mcpTimeout);
+            agent.mcpTimeout = null;
+          }
+          // Set a timeout to remove badge if no further activity
+          agent.mcpTimeout = setTimeout(() => {
+            if (agent.mcpBadge) {
+              MCPIcons.removeBadge(this, agent.mcpBadge);
+              agent.mcpBadge = null;
+              agent.mcpService = null;
+            }
+            agent.mcpTimeout = null;
+          }, 5000);
+        }
+      });
+    } catch (e) {
+      // Server not running or endpoint unavailable, silently ignore
+    }
+  }
+
+  // ========================================
   // Backend Polling & UI
   // ========================================
 
@@ -1620,6 +1708,13 @@ class OfficeScene extends Phaser.Scene {
       const cardClass = isSub ? 'agent-card sub-agent' : 'agent-card';
       const displayName = isSub ? (a.nickname || a.id) : a.id;
       const roleTag = isSub && a.agent_role ? `<span class="agent-role">${a.agent_role}</span>` : '';
+      // MCP badge for sidebar
+      let mcpTag = '';
+      const agentObj = this.agents[a.id];
+      if (agentObj && agentObj.mcpService) {
+        const svc = MCPIcons.getService(agentObj.mcpService);
+        mcpTag = `<span class="mcp-badge" style="background:${svc.bg};color:${svc.color}">${svc.icon}</span>`;
+      }
       return `
         <div class="${cardClass}" ondblclick="focusAgent('${a.id}')">
           <div class="avatar" style="background:${color}">${a.id.slice(-2).toUpperCase()}</div>
@@ -1627,7 +1722,7 @@ class OfficeScene extends Phaser.Scene {
             <div class="name">${displayName}${roleTag}</div>
             <div class="task">${a.task || 'No active task'}</div>
           </div>
-          <span class="state-badge state-${a.state}">${a.state}</span>
+          <span class="state-badge state-${a.state}">${a.state}</span>${mcpTag}
         </div>
       `;
     };

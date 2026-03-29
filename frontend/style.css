@@ -583,3 +583,13 @@ body {
   flex: 1;
   display: block;
 }
+
+/* MCP Service Badge */
+.mcp-badge {
+  font-size: 8px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 700;
+  font-family: monospace;
+  margin-left: 4px;
+}
