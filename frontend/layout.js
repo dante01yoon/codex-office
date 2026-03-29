@@ -200,6 +200,13 @@ const BUBBLES = {
     'Task complete!',
     'GG!',
   ],
+  subagent: [
+    'Exploring code...',
+    'Found something!',
+    'Subtask progress...',
+    'Reporting back...',
+    'On it!',
+  ],
 };
 
 // Boss character (always present)

@@ -644,7 +644,16 @@ class OfficeScene extends Phaser.Scene {
       walkFrame: 0,
       walkTimer: 0,
       idleBobPhase: Math.random() * Math.PI * 2,
+      parentId: agentData.parent_id || null,
+      isSubagent: agentData.is_subagent || false,
+      nickname: agentData.nickname || '',
+      agentRole: agentData.agent_role || '',
     };
+
+    if (agent.isSubagent) {
+      sprite.setScale(0.4);
+      nameTag.setStyle({ fontSize: '7px' });
+    }
 
     this.agents[agentData.id] = agent;
 
@@ -706,10 +715,16 @@ class OfficeScene extends Phaser.Scene {
     switch (state) {
       case 'coding':
       case 'searching': {
-        const slotIndex = this.assignDeskSlot(agent.id);
-        const slot = ZONES.desk.slots[slotIndex];
-        targetX = slot.x;
-        targetY = slot.y;
+        if (agent.isSubagent && agent.parentId && this.agents[agent.parentId]) {
+          const parent = this.agents[agent.parentId];
+          targetX = parent.sprite.x + 30;
+          targetY = parent.sprite.y + 10;
+        } else {
+          const slotIndex = this.assignDeskSlot(agent.id);
+          const slot = ZONES.desk.slots[slotIndex];
+          targetX = slot.x;
+          targetY = slot.y;
+        }
         break;
       }
       case 'thinking': {
@@ -1088,6 +1103,9 @@ class OfficeScene extends Phaser.Scene {
       }
     });
 
+    // Sort so non-subagents (parents) are created first
+    serverAgents.sort((a, b) => (a.is_subagent ? 1 : 0) - (b.is_subagent ? 1 : 0));
+
     // Add or update agents
     serverAgents.forEach(agentData => {
       const existing = this.agents[agentData.id];
@@ -1137,10 +1155,13 @@ class OfficeScene extends Phaser.Scene {
       if (el) el.textContent = val;
     };
 
+    const subs = agents.filter(a => a.is_subagent).length;
+
     setVal('stat-total', total);
     setVal('stat-coding', coding);
     setVal('stat-thinking', thinking);
     setVal('stat-idle', idle);
+    setVal('stat-subagents', subs);
   }
 
   updateUI(agents) {
@@ -1152,21 +1173,41 @@ class OfficeScene extends Phaser.Scene {
       return;
     }
 
-    list.innerHTML = agents.map(a => {
+    const parents = agents.filter(a => !a.is_subagent);
+    const subagents = agents.filter(a => a.is_subagent);
+
+    const renderCard = (a, isSub) => {
       const color = this.agents[a.id]
         ? '#' + this.agents[a.id].color.toString(16).padStart(6, '0')
         : '#10a37f';
+      const cardClass = isSub ? 'agent-card sub-agent' : 'agent-card';
+      const displayName = isSub ? (a.nickname || a.id) : a.id;
+      const roleTag = isSub && a.agent_role ? `<span class="agent-role">${a.agent_role}</span>` : '';
       return `
-        <div class="agent-card" ondblclick="focusAgent('${a.id}')">
+        <div class="${cardClass}" ondblclick="focusAgent('${a.id}')">
           <div class="avatar" style="background:${color}">${a.id.slice(-2).toUpperCase()}</div>
           <div class="info">
-            <div class="name">${a.id}</div>
+            <div class="name">${displayName}${roleTag}</div>
             <div class="task">${a.task || 'No active task'}</div>
           </div>
           <span class="state-badge state-${a.state}">${a.state}</span>
         </div>
       `;
-    }).join('');
+    };
+
+    let html = '';
+    parents.forEach(p => {
+      html += renderCard(p, false);
+      subagents.filter(s => s.parent_id === p.id).forEach(s => {
+        html += renderCard(s, true);
+      });
+    });
+    // Render orphan sub-agents (no matching parent)
+    subagents.filter(s => !parents.some(p => p.id === s.parent_id)).forEach(s => {
+      html += renderCard(s, true);
+    });
+
+    list.innerHTML = html;
   }
 
   updateActivityLog(log) {

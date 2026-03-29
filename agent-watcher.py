@@ -7,10 +7,15 @@ Detects actual Codex CLI/VS Code sessions using three methods:
 3. Log analysis: reads ~/.codex/logs_1.sqlite for recent activity to classify state
 
 State classification:
-  - Recent log activity (< 5s) with high CPU → coding
-  - Recent log activity (< 10s) with moderate CPU → thinking
-  - Some activity (< 30s) → searching
-  - No recent activity → idle
+  - Recent log activity (< 5s) with high CPU -> coding
+  - Recent log activity (< 10s) with moderate CPU -> thinking
+  - Some activity (< 30s) -> searching
+  - No recent activity -> idle
+
+Sub-agent detection:
+  - Parses JSON source column in threads for subagent spawn info
+  - Queries thread_spawn_edges table for parent/child relationships
+  - Sub-agents get their own entries with depth and role metadata
 """
 
 import subprocess
@@ -47,7 +52,7 @@ agent_counter = 0
 thread_cache = {}   # thread_id -> { title, model, cwd, ... }
 
 
-# ─── Process Detection ───────────────────────────────────────────
+# --- Process Detection -------------------------------------------------------
 
 def get_codex_processes():
     """
@@ -96,7 +101,7 @@ def get_codex_processes():
             if "codex-mcp-bridge" in args or "chatgpt" in args_lower:
                 continue
 
-            # ── Method 1: Codex Native Binary (the real worker) ──
+            # -- Method 1: Codex Native Binary (the real worker) --
             # Path pattern: .../codex-darwin-arm64/vendor/.../codex exec ...
             # This is the process doing actual work (high CPU)
             if ("vendor" in args and "codex" in args
@@ -124,7 +129,7 @@ def get_codex_processes():
                 seen_pids.add(pid)
                 continue
 
-            # ── Method 2: Codex CLI Node Launcher (shim) ──
+            # -- Method 2: Codex CLI Node Launcher (shim) --
             # Pattern: node /path/to/bin/codex exec ...
             # Only use this if no native binary was found for this session
             if ("node" in args_lower and "/codex" in args
@@ -146,7 +151,7 @@ def get_codex_processes():
                 seen_pids.add(pid)
                 continue
 
-            # ── Method 3: Codex VS Code Extension ──
+            # -- Method 3: Codex VS Code Extension --
             # Native binary: codex app-server (may have multiple instances)
             if "app-server" in args:
                 source = "vscode"
@@ -242,12 +247,13 @@ def _extract_vscode_ext_version(args):
     return "default"
 
 
-# ─── SQLite Session Detection ────────────────────────────────────
+# --- SQLite Session Detection -------------------------------------------------
 
 def get_active_threads():
     """
     Query Codex's state DB for recently active threads.
     Returns sessions updated in the last 5 minutes.
+    Also detects sub-agent threads via source JSON and thread_spawn_edges.
     """
     if not STATE_DB.exists():
         return []
@@ -259,25 +265,71 @@ def get_active_threads():
 
         rows = conn.execute("""
             SELECT id, title, model, source, cwd, created_at, updated_at,
-                   cli_version, first_user_message, agent_nickname
+                   cli_version, first_user_message, agent_nickname, agent_role
             FROM threads
             WHERE archived = 0 AND updated_at > ?
             ORDER BY updated_at DESC
-            LIMIT 10
+            LIMIT 20
         """, (cutoff,)).fetchall()
+
+        # Query thread_spawn_edges for open sub-agent relationships
+        spawn_edges = {}
+        try:
+            edge_rows = conn.execute("""
+                SELECT child_thread_id, parent_thread_id
+                FROM thread_spawn_edges
+                WHERE status = 'open'
+            """).fetchall()
+            for edge in edge_rows:
+                spawn_edges[edge["child_thread_id"]] = edge["parent_thread_id"]
+        except sqlite3.OperationalError:
+            # Table may not exist in older versions
+            pass
+
         conn.close()
 
         threads = []
         for row in rows:
+            raw_source = row["source"] or "cli"
+            is_subagent = False
+            parent_thread_id = None
+            depth = 0
+            agent_role = row["agent_role"] or ""
+
+            # Parse source column: if it starts with '{', it's JSON with spawn info
+            if raw_source.startswith("{"):
+                try:
+                    source_data = json.loads(raw_source)
+                    # Extract subagent spawn info from JSON
+                    spawn_info = source_data.get("subagent.thread_spawn") or source_data.get("subagent", {})
+                    if spawn_info:
+                        is_subagent = True
+                        parent_thread_id = spawn_info.get("parent_thread_id", "")
+                        depth = spawn_info.get("depth", 1)
+                    # Normalize source to "cli" since the JSON is metadata, not a source type
+                    raw_source = "cli"
+                except (json.JSONDecodeError, AttributeError):
+                    raw_source = "cli"
+
+            # Fallback: check thread_spawn_edges for sub-agent detection
+            if not is_subagent and row["id"] in spawn_edges:
+                is_subagent = True
+                parent_thread_id = spawn_edges[row["id"]]
+                depth = 1
+
             thread = {
                 "id": row["id"],
                 "title": row["title"] or "Untitled",
                 "model": row["model"] or "unknown",
-                "source": row["source"] or "cli",
+                "source": raw_source,
                 "cwd": row["cwd"] or "",
                 "updated_at": row["updated_at"],
                 "nickname": row["agent_nickname"] or "",
                 "first_message": (row["first_user_message"] or "")[:80],
+                "is_subagent": is_subagent,
+                "parent_thread_id": parent_thread_id,
+                "depth": depth,
+                "agent_role": agent_role,
             }
             thread_cache[thread["id"]] = thread
             threads.append(thread)
@@ -337,7 +389,7 @@ def get_log_based_state(thread_id=None):
         return "idle"
 
 
-# ─── Combined Detection ──────��───────────────────────────────────
+# --- Combined Detection -------------------------------------------------------
 
 def detect_all_agents():
     """
@@ -346,13 +398,14 @@ def detect_all_agents():
     Priority:
     1. Process-based detection (reliable for CPU state)
     2. SQLite thread detection (enriches with metadata)
+    3. Sub-agent threads always get their own entry
     """
     agents = {}
 
     # Method 1: Process scanning
     processes = get_codex_processes()
     for proc in processes:
-        # Use group key for VS Code (multiple PIDs → one agent), PID for CLI
+        # Use group key for VS Code (multiple PIDs -> one agent), PID for CLI
         if proc.get("_group_key"):
             key = proc["_group_key"]
         else:
@@ -370,10 +423,52 @@ def detect_all_agents():
             "detection": "process",
         }
 
-    # Method 2: SQLite active threads (only for sessions not already found by process)
+    # Method 2: SQLite active threads
     threads = get_active_threads()
     for thread in threads:
-        # Check if this thread is already represented by a process
+        # Sub-agent threads always get their own entry
+        if thread["is_subagent"]:
+            key = f"sub_{thread['id'][:8]}"
+            log_state = get_log_based_state(thread["id"])
+
+            # Resolve parent label
+            parent_label = ""
+            if thread["parent_thread_id"]:
+                # Check thread_cache first
+                parent = thread_cache.get(thread["parent_thread_id"])
+                if parent:
+                    parent_label = _shorten(parent.get("title", ""), 30) or thread["parent_thread_id"][:8]
+                else:
+                    # Check existing agents for a matching thread_id
+                    for ag in agents.values():
+                        if ag.get("thread_id") == thread["parent_thread_id"]:
+                            parent_label = ag.get("label", thread["parent_thread_id"][:8])
+                            break
+                    if not parent_label:
+                        parent_label = thread["parent_thread_id"][:8]
+
+            agents[key] = {
+                "key": key,
+                "pid": "",
+                "cpu": 0,
+                "tty": thread["source"],
+                "source": thread["source"],
+                "label": _shorten(thread["title"], 40),
+                "state": log_state,
+                "detection": "sqlite+subagent",
+                "thread_id": thread["id"],
+                "model": thread["model"],
+                "cwd": thread["cwd"],
+                "is_subagent": True,
+                "parent_thread_id": thread["parent_thread_id"],
+                "parent_label": parent_label,
+                "nickname": thread["nickname"],
+                "agent_role": thread["agent_role"],
+                "depth": thread["depth"],
+            }
+            continue
+
+        # Regular threads: check if already represented by a process
         already_found = False
         for agent in agents.values():
             if agent["source"] == thread["source"]:
@@ -432,7 +527,7 @@ def _shorten(text, maxlen):
     return text
 
 
-# ─── State Management ─────────────��──────────────────────────────
+# --- State Management ---------------------------------------------------------
 
 def debounced_state(key, new_state, agent_info):
     """Apply debouncing to prevent state flapping."""
@@ -473,11 +568,13 @@ def debounced_state(key, new_state, agent_info):
     return entry["state"]
 
 
-def post_state(agent_id, state, pid, tty, task=""):
+def post_state(agent_id, state, pid, tty, task="", **extra):
     try:
+        payload = {"id": agent_id, "state": state, "pid": pid, "tty": tty, "task": task}
+        payload.update(extra)
         requests.post(
             f"{BACKEND_URL}/agent/state",
-            json={"id": agent_id, "state": state, "pid": pid, "tty": tty, "task": task},
+            json=payload,
             timeout=1,
         )
     except requests.RequestException:
@@ -503,6 +600,11 @@ def build_task_description(agent_info, state):
     source = agent_info.get("source", "")
 
     parts = []
+
+    # Prepend [role] for sub-agents with a role
+    if agent_info.get("is_subagent") and agent_info.get("agent_role"):
+        parts.append(f"[{agent_info['agent_role']}]")
+
     if state == "coding":
         parts.append("Working")
     elif state == "thinking":
@@ -526,7 +628,7 @@ def build_task_description(agent_info, state):
     return " ".join(parts)
 
 
-# ─── Main Loop ───────────────────────────────────────────────────
+# --- Main Loop ----------------------------------------------------------------
 
 def main():
     print("=" * 56)
@@ -582,14 +684,31 @@ def main():
                 prev = agent_states[key].get("last_posted")
                 is_new = prev is None
 
+                # Build extra kwargs for sub-agents
+                extra = {}
+                if agent_info.get("is_subagent"):
+                    extra["is_subagent"] = True
+                    extra["nickname"] = agent_info.get("nickname", "")
+                    extra["agent_role"] = agent_info.get("agent_role", "")
+                    extra["parent_id"] = agent_info.get("parent_label", "")
+
                 if is_new or prev != final_state:
                     post_state(name, final_state, agent_info.get("pid", ""),
-                              agent_info.get("tty", ""), task)
+                              agent_info.get("tty", ""), task, **extra)
                     agent_states[key]["last_posted"] = final_state
 
                     if is_new:
                         src = agent_info.get("detection", "?")
-                        print(f"  [+] {name} joined ({src}) - {final_state}")
+                        if agent_info.get("is_subagent"):
+                            role = agent_info.get("agent_role", "")
+                            parent = agent_info.get("parent_label", "?")
+                            depth = agent_info.get("depth", 1)
+                            nick = agent_info.get("nickname", "")
+                            role_str = f" role={role}" if role else ""
+                            nick_str = f" ({nick})" if nick else ""
+                            print(f"  [+] {name}{nick_str} joined ({src}) - sub-agent of {parent} depth={depth}{role_str} - {final_state}")
+                        else:
+                            print(f"  [+] {name} joined ({src}) - {final_state}")
                     elif prev and prev != final_state:
                         cpu = agent_info.get("cpu", 0)
                         print(f"  [~] {name}: {prev} -> {final_state} (CPU: {cpu:.1f}%)")

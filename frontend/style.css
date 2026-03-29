@@ -252,3 +252,44 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #484f58;
 }
+
+/* Sub-agent cards */
+.agent-card.sub-agent {
+  padding-left: 32px;
+  position: relative;
+  background: #161b2280;
+}
+
+.agent-card.sub-agent::before {
+  content: '';
+  position: absolute;
+  left: 18px;
+  top: 0;
+  height: 50%;
+  width: 1px;
+  background: #30363d;
+}
+
+.agent-card.sub-agent::after {
+  content: '';
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  width: 8px;
+  height: 1px;
+  background: #30363d;
+}
+
+.agent-card.sub-agent .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  border-radius: 3px;
+}
+
+.agent-role {
+  font-size: 9px;
+  color: #6e7681;
+  font-weight: 400;
+  margin-left: 4px;
+}

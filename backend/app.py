@@ -87,6 +87,10 @@ def update_agent_state():
     task = data.get("task", "")
     pid = data.get("pid", "")
     tty = data.get("tty", "")
+    parent_id = data.get("parent_id", "")
+    is_subagent = data.get("is_subagent", False)
+    nickname = data.get("nickname", "")
+    agent_role = data.get("agent_role", "")
 
     agents = load_agents()
     found = False
@@ -97,6 +101,10 @@ def update_agent_state():
             agent["task"] = task
             agent["pid"] = pid
             agent["tty"] = tty
+            agent["parent_id"] = parent_id
+            agent["is_subagent"] = is_subagent
+            agent["nickname"] = nickname
+            agent["agent_role"] = agent_role
             agent["last_update"] = time.time()
             if old_state != state:
                 add_log(agent_id, state, task)
@@ -110,6 +118,10 @@ def update_agent_state():
             "task": task,
             "pid": pid,
             "tty": tty,
+            "parent_id": parent_id,
+            "is_subagent": is_subagent,
+            "nickname": nickname,
+            "agent_role": agent_role,
             "last_update": time.time(),
             "joined": time.time(),
         }

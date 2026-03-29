@@ -6,3 +6,4 @@ backend/agents.json
 *.log
 *.err
 logs/
+MULTI_PROVIDER_MCP_PRD.md
