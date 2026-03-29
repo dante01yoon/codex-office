@@ -16,6 +16,9 @@ class OfficeScene extends Phaser.Scene {
     this.clockText = null;
     this.serverLeds = [];
     this.ambientObjects = [];
+    this.elevatorDoors = null; // { left, right, light, open }
+    this.elevatorBusy = false; // lock to serialize elevator usage
+    this.elevatorQueue = [];   // queued callbacks waiting for elevator
   }
 
   create() {
@@ -132,7 +135,7 @@ class OfficeScene extends Phaser.Scene {
     this.drawCouch(g);
     this.drawCoffeeMachine(g);
     this.drawPlants(g);
-    this.drawDoor(g);
+    this.drawElevator();
     this.drawPosters(g);
     this.drawZoneLabels();
   }
@@ -434,33 +437,174 @@ class OfficeScene extends Phaser.Scene {
     });
   }
 
-  drawDoor(g) {
+  drawElevator() {
     const d = FURNITURE.door;
-    const dg = this.add.graphics();
-    dg.setDepth(DEPTH.furnitureBg);
+    const shaftW = 56;
+    const shaftH = 90;
+    const shaftX = d.x - shaftW / 2;
+    const shaftY = d.y - shaftH;
 
-    // Door frame
-    dg.fillStyle(COLORS.trim);
-    dg.fillRect(d.x - 24, d.y - 80, 4, 80);
-    dg.fillRect(d.x + 20, d.y - 80, 4, 80);
-    dg.fillRect(d.x - 24, d.y - 84, 48, 4);
+    // --- Shaft background (always visible behind doors) ---
+    const shaft = this.add.graphics();
+    shaft.setDepth(DEPTH.furnitureBg);
 
-    // Door
-    dg.fillStyle(0x3d2b1f);
-    dg.fillRect(d.x - 20, d.y - 80, 40, 80);
+    // Outer frame / wall recess
+    shaft.fillStyle(COLORS.trim);
+    shaft.fillRect(shaftX - 4, shaftY - 4, shaftW + 8, shaftH + 4);
 
-    // Door handle
-    dg.fillStyle(COLORS.coffeeAccent);
-    dg.fillRect(d.x + 10, d.y - 44, 4, 8);
+    // Interior of elevator (dark)
+    shaft.fillStyle(COLORS.elevatorInterior);
+    shaft.fillRect(shaftX, shaftY, shaftW, shaftH);
 
-    // "EXIT" sign
-    this.add.text(d.x, d.y - 92, 'EXIT', {
+    // Interior back-wall panel lines
+    shaft.lineStyle(1, 0x21262d, 0.4);
+    for (let px = shaftX + 14; px < shaftX + shaftW; px += 14) {
+      shaft.lineBetween(px, shaftY + 2, px, shaftY + shaftH - 2);
+    }
+
+    // --- Door panels (two halves that slide apart) ---
+    const doorHalfW = shaftW / 2;
+
+    const leftDoor = this.add.graphics();
+    leftDoor.setDepth(DEPTH.furnitureBg + 2);
+    leftDoor.fillStyle(COLORS.elevatorDoor);
+    leftDoor.fillRect(0, 0, doorHalfW, shaftH);
+    // Edge highlight
+    leftDoor.fillStyle(COLORS.elevatorDoorEdge);
+    leftDoor.fillRect(doorHalfW - 2, 0, 2, shaftH);
+    leftDoor.setPosition(shaftX, shaftY);
+
+    const rightDoor = this.add.graphics();
+    rightDoor.setDepth(DEPTH.furnitureBg + 2);
+    rightDoor.fillStyle(COLORS.elevatorDoor);
+    rightDoor.fillRect(0, 0, doorHalfW, shaftH);
+    // Edge highlight
+    rightDoor.fillStyle(COLORS.elevatorDoorEdge);
+    rightDoor.fillRect(0, 0, 2, shaftH);
+    rightDoor.setPosition(shaftX + doorHalfW, shaftY);
+
+    // --- Indicator light above doors ---
+    const light = this.add.graphics();
+    light.setDepth(DEPTH.furnitureBg + 3);
+    light.fillStyle(COLORS.elevatorLightOff);
+    light.fillCircle(d.x, shaftY - 10, 5);
+
+    // --- Label ---
+    this.add.text(d.x, shaftY - 22, 'ELEVATOR', {
       fontSize: '7px',
       fontFamily: 'monospace',
-      color: '#f85149',
-      backgroundColor: '#21262d',
-      padding: { x: 3, y: 1 },
+      color: '#6e7681',
+      letterSpacing: 1,
     }).setOrigin(0.5, 0.5).setDepth(DEPTH.furnitureBg + 1);
+
+    // Store references for animation
+    this.elevatorDoors = {
+      left: leftDoor,
+      right: rightDoor,
+      light,
+      open: false,
+      shaftX,
+      shaftY,
+      shaftW,
+      shaftH,
+      doorHalfW,
+      centerX: d.x,
+      centerY: d.y - 20, // where an agent stands inside
+    };
+  }
+
+  /**
+   * Animate elevator doors open. Returns a Promise that resolves when
+   * the doors are fully open.
+   */
+  openElevator() {
+    return new Promise(resolve => {
+      const ev = this.elevatorDoors;
+      if (!ev || ev.open) { resolve(); return; }
+
+      // Toggle indicator to green
+      ev.light.clear();
+      ev.light.fillStyle(COLORS.elevatorLight);
+      ev.light.fillCircle(ev.centerX, ev.shaftY - 10, 5);
+
+      // Slide left door to the left, right door to the right
+      this.tweens.add({
+        targets: ev.left,
+        x: ev.shaftX - ev.doorHalfW,
+        duration: 400,
+        ease: 'Power2',
+      });
+      this.tweens.add({
+        targets: ev.right,
+        x: ev.shaftX + ev.shaftW,
+        duration: 400,
+        ease: 'Power2',
+        onComplete: () => {
+          ev.open = true;
+          resolve();
+        },
+      });
+    });
+  }
+
+  /**
+   * Animate elevator doors closed. Returns a Promise that resolves when
+   * the doors are fully shut.
+   */
+  closeElevator() {
+    return new Promise(resolve => {
+      const ev = this.elevatorDoors;
+      if (!ev || !ev.open) { resolve(); return; }
+
+      // Slide doors back to closed position
+      this.tweens.add({
+        targets: ev.left,
+        x: ev.shaftX,
+        duration: 400,
+        ease: 'Power2',
+      });
+      this.tweens.add({
+        targets: ev.right,
+        x: ev.shaftX + ev.doorHalfW,
+        duration: 400,
+        ease: 'Power2',
+        onComplete: () => {
+          ev.open = false;
+
+          // Toggle indicator to red
+          ev.light.clear();
+          ev.light.fillStyle(COLORS.elevatorLightOff);
+          ev.light.fillCircle(ev.centerX, ev.shaftY - 10, 5);
+
+          resolve();
+        },
+      });
+    });
+  }
+
+  /**
+   * Acquire the elevator for an animation sequence. If the elevator is
+   * already in use, the callback is queued and executed in order.
+   * Returns a release function that must be called when done.
+   */
+  _acquireElevator() {
+    return new Promise(resolve => {
+      const tryAcquire = () => {
+        if (!this.elevatorBusy) {
+          this.elevatorBusy = true;
+          resolve(() => {
+            this.elevatorBusy = false;
+            if (this.elevatorQueue.length > 0) {
+              const next = this.elevatorQueue.shift();
+              next();
+            }
+          });
+        } else {
+          this.elevatorQueue.push(tryAcquire);
+        }
+      };
+      tryAcquire();
+    });
   }
 
   drawPosters() {
@@ -604,14 +748,15 @@ class OfficeScene extends Phaser.Scene {
     const textureKey = SpriteFactory.getTextureKey(colorIndex);
     const color = AGENT_COLORS[colorIndex % AGENT_COLORS.length];
 
-    // Start at door
-    const startX = FURNITURE.door.x;
-    const startY = FURNITURE.door.y - 20;
+    // Start hidden inside the elevator
+    const ev = this.elevatorDoors;
+    const startX = ev ? ev.centerX : FURNITURE.door.x;
+    const startY = ev ? ev.centerY : FURNITURE.door.y - 20;
 
     const sprite = this.add.sprite(startX, startY, textureKey, 0);
     sprite.setDepth(DEPTH.characters);
     sprite.setScale(0.6);
-    sprite.setAlpha(0);
+    sprite.setAlpha(0); // hidden until doors open
 
     const nameTag = this.add.text(startX, startY - 40, agentData.id, {
       fontSize: '8px',
@@ -620,13 +765,6 @@ class OfficeScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0.5, 1).setDepth(DEPTH.bubbles);
     nameTag.setAlpha(0);
-
-    // Entrance animation
-    this.tweens.add({
-      targets: [sprite, nameTag],
-      alpha: 1,
-      duration: 300,
-    });
 
     const agent = {
       id: agentData.id,
@@ -657,13 +795,40 @@ class OfficeScene extends Phaser.Scene {
 
     this.agents[agentData.id] = agent;
 
-    // Move to initial position
-    this.moveAgentToState(agent, agentData.state || 'idle');
+    // Elevator entrance sequence
+    this._acquireElevator().then(async (release) => {
+      try {
+        // 1. Open elevator doors
+        await this.openElevator();
 
-    // Show join bubble
-    this.showBubble(agent, BUBBLES.join[Math.floor(Math.random() * BUBBLES.join.length)]);
+        // 2. Reveal agent inside the elevator
+        this.tweens.add({
+          targets: [sprite, nameTag],
+          alpha: 1,
+          duration: 200,
+        });
+        await this._delay(250);
+
+        // 3. Agent walks out of elevator to their position
+        this.moveAgentToState(agent, agentData.state || 'idle');
+
+        // Show join bubble
+        this.showBubble(agent, BUBBLES.join[Math.floor(Math.random() * BUBBLES.join.length)]);
+
+        // 4. Brief pause then close elevator behind them
+        await this._delay(500);
+        await this.closeElevator();
+      } finally {
+        release();
+      }
+    });
 
     return agent;
+  }
+
+  /** Small helper that returns a Promise resolving after `ms` milliseconds. */
+  _delay(ms) {
+    return new Promise(resolve => this.time.delayedCall(ms, resolve));
   }
 
   removeAgent(agentId) {
@@ -679,19 +844,46 @@ class OfficeScene extends Phaser.Scene {
       delete this.deskSlots[agentId];
     }
 
-    // Animate out (walk to door then fade)
+    const ev = this.elevatorDoors;
+    const doorX = ev ? ev.centerX : FURNITURE.door.x;
+    const doorY = ev ? ev.centerY : FURNITURE.door.y - 20;
+
+    // 1. Walk agent to elevator position
     this.tweens.add({
       targets: agent.sprite,
-      x: FURNITURE.door.x,
-      y: FURNITURE.door.y - 20,
+      x: doorX,
+      y: doorY,
       duration: 800,
       ease: 'Power1',
+      onUpdate: () => {
+        agent.nameTag.setPosition(agent.sprite.x, agent.sprite.y - 40);
+        if (agent.bubble) {
+          agent.bubble.bg.setPosition(agent.sprite.x, agent.sprite.y - 56);
+          agent.bubble.text.setPosition(agent.sprite.x, agent.sprite.y - 56);
+        }
+      },
       onComplete: () => {
-        this.tweens.add({
-          targets: [agent.sprite, agent.nameTag],
-          alpha: 0,
-          duration: 300,
-          onComplete: () => {
+        // 2. Elevator sequence: open -> step inside -> close -> destroy
+        this._acquireElevator().then(async (release) => {
+          try {
+            await this.openElevator();
+
+            // 3. Agent walks into the elevator (small step inward)
+            this.tweens.add({
+              targets: agent.sprite,
+              y: doorY + 5,
+              duration: 200,
+              ease: 'Power1',
+              onUpdate: () => {
+                agent.nameTag.setPosition(agent.sprite.x, agent.sprite.y - 40);
+              },
+            });
+            await this._delay(300);
+
+            // 4. Close doors over the agent
+            await this.closeElevator();
+
+            // 5. Destroy agent sprites now that they are hidden
             agent.sprite.destroy();
             agent.nameTag.destroy();
             if (agent.bubble) {
@@ -699,7 +891,9 @@ class OfficeScene extends Phaser.Scene {
               agent.bubble.text.destroy();
             }
             delete this.agents[agentId];
-          },
+          } finally {
+            release();
+          }
         });
       },
     });
