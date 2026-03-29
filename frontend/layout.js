@@ -38,6 +38,13 @@ const COLORS = {
   windowFrame: 0x30363d,
   // Characters
   skinTone: 0xf0c8a0,
+  // Elevator
+  elevatorShaft: 0x0a0c10,
+  elevatorDoor: 0x484f58,
+  elevatorDoorEdge: 0x30363d,
+  elevatorInterior: 0x161b22,
+  elevatorLight: 0x3fb950,
+  elevatorLightOff: 0xf85149,
   // Brand
   codexGreen: 0x10a37f,
   codexDark: 0x0d1117,
