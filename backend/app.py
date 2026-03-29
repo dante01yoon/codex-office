@@ -457,6 +457,82 @@ def get_whiteboard():
     })
 
 
+@app.route("/mcp-activity", methods=["GET"])
+def mcp_activity():
+    """Return per-agent MCP tool activity and overall MCP usage stats."""
+    MCP_PATTERN = re.compile(r'ToolCall:\s*mcp__(\w+)__(\w+)')
+
+    # Find most recent active thread
+    thread_id = None
+    if STATE_DB.exists():
+        try:
+            conn = sqlite3.connect(
+                f"file:{STATE_DB}?mode=ro", uri=True, timeout=3
+            )
+            row = conn.execute(
+                "SELECT id FROM threads WHERE archived = 0 "
+                "ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+            conn.close()
+            if row:
+                thread_id = row[0]
+        except (sqlite3.Error, OSError):
+            pass
+
+    if not thread_id or not LOGS_DB.exists():
+        return jsonify({"active": {}, "usage": {}})
+
+    # Query last 200 log entries for MCP usage counts
+    try:
+        conn = sqlite3.connect(
+            f"file:{LOGS_DB}?mode=ro", uri=True, timeout=3
+        )
+        rows = conn.execute(
+            "SELECT ts, level, target, feedback_log_body, thread_id "
+            "FROM logs "
+            "WHERE thread_id = ? AND feedback_log_body IS NOT NULL "
+            "ORDER BY ts DESC, id DESC "
+            "LIMIT 200",
+            (thread_id,),
+        ).fetchall()
+        conn.close()
+    except (sqlite3.Error, OSError) as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    now = time.time()
+    active = {}
+    usage = {}
+
+    for ts, level, target, body, row_thread_id in rows:
+        if not body:
+            continue
+        match = MCP_PATTERN.search(body)
+        if not match:
+            continue
+
+        service = match.group(1)
+        method = match.group(2)
+
+        # Count all MCP calls for usage stats
+        usage[service] = usage.get(service, 0) + 1
+
+        # Track active MCP calls (last 30 seconds only)
+        if now - ts <= 30:
+            agent_key = row_thread_id if row_thread_id else "main"
+            # Keep only the most recent call per agent
+            if agent_key not in active:
+                active[agent_key] = {
+                    "service": service,
+                    "method": method,
+                    "timestamp": ts,
+                }
+
+    # Sort usage by count descending
+    usage = dict(sorted(usage.items(), key=lambda x: x[1], reverse=True))
+
+    return jsonify({"active": active, "usage": usage})
+
+
 @app.route("/context-usage", methods=["GET"])
 def context_usage():
     """Return context window utilization for the most recent active thread."""
