@@ -2,8 +2,12 @@
 
 import json
 import os
+import re
+import sqlite3
 import subprocess
 import time
+from pathlib import Path
+
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
@@ -214,6 +218,143 @@ def git_status():
         return jsonify({"error": "Git not found"}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+CODEX_HOME = Path.home() / ".codex"
+STATE_DB = CODEX_HOME / "state_5.sqlite"
+LOGS_DB = CODEX_HOME / "logs_1.sqlite"
+
+
+def _parse_log_body(body, level):
+    """Parse a feedback_log_body string into a typed conversation entry.
+
+    Returns a dict with keys (type, content) or None if the entry should
+    be skipped (internal noise).
+    """
+    if not body:
+        return None
+
+    # Extract the human-readable part after the last span closure ": "
+    # Format: "span{key=val}:span{...}: <message>"
+    msg = body
+    colon_idx = body.rfind("}: ")
+    if colon_idx >= 0:
+        msg = body[colon_idx + 3:].strip()
+
+    if not msg:
+        return None
+
+    # Classify the message into a conversation event type
+    # ToolCall events
+    tool_match = re.match(r"ToolCall:\s*(\S+)\s*(.*)", msg, re.DOTALL)
+    if tool_match:
+        tool_name = tool_match.group(1)
+        tool_args = tool_match.group(2).strip()
+        # Try to pretty-print JSON args
+        if tool_args.startswith("{"):
+            try:
+                parsed = json.loads(tool_args.split(" thread_id=")[0])
+                tool_args = json.dumps(parsed, indent=2)
+            except (json.JSONDecodeError, IndexError):
+                pass
+        content = f"{tool_name}: {tool_args}" if tool_args else tool_name
+        return {"type": "tool", "content": content}
+
+    # Shutdown / lifecycle events
+    if "Shutting down" in msg:
+        return {"type": "info", "content": msg}
+
+    # User input operations
+    if "codex.op=\"user_input\"" in body or "op.dispatch.user_input" in body:
+        # Only surface if the message itself is meaningful
+        if msg and "cache" not in msg.lower():
+            return {"type": "user", "content": msg}
+
+    # Error / warning level entries
+    if level in ("WARN", "ERROR"):
+        return {"type": "error", "content": msg}
+
+    # Model / API events
+    if "models cache" in msg or "cache hit" in msg or "cache entry" in msg:
+        return None  # skip noise
+
+    # Generic info from stream_events_utils (responses, completions)
+    if any(kw in msg for kw in ("TextDelta", "response", "completion", "output")):
+        return {"type": "response", "content": msg}
+
+    # Fallback: include as info if the message is substantial
+    if len(msg) > 10:
+        return {"type": "info", "content": msg}
+
+    return None
+
+
+@app.route("/conversation", methods=["GET"])
+def get_conversation():
+    """Return parsed conversation events from Codex logs.
+
+    Query params:
+      thread_id  - specific thread to query (optional; defaults to most recent)
+    """
+    thread_id = request.args.get("thread_id")
+
+    # Resolve thread_id from state DB if not provided
+    if not thread_id:
+        if STATE_DB.exists():
+            try:
+                conn = sqlite3.connect(
+                    f"file:{STATE_DB}?mode=ro", uri=True, timeout=3
+                )
+                row = conn.execute(
+                    "SELECT id FROM threads WHERE archived = 0 "
+                    "ORDER BY updated_at DESC LIMIT 1"
+                ).fetchone()
+                conn.close()
+                if row:
+                    thread_id = row[0]
+            except (sqlite3.Error, OSError):
+                pass
+
+    if not thread_id:
+        return jsonify([])
+
+    # Query logs for this thread
+    if not LOGS_DB.exists():
+        return jsonify([])
+
+    try:
+        conn = sqlite3.connect(
+            f"file:{LOGS_DB}?mode=ro", uri=True, timeout=3
+        )
+        rows = conn.execute(
+            "SELECT ts, level, target, feedback_log_body "
+            "FROM logs "
+            "WHERE thread_id = ? AND feedback_log_body IS NOT NULL "
+            "ORDER BY ts DESC, id DESC "
+            "LIMIT 200",
+            (thread_id,),
+        ).fetchall()
+        conn.close()
+    except (sqlite3.Error, OSError) as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    entries = []
+    for ts, level, target, body in rows:
+        parsed = _parse_log_body(body, level)
+        if parsed is None:
+            continue
+        entries.append(
+            {
+                "time": time.strftime("%H:%M:%S", time.localtime(ts)),
+                "type": parsed["type"],
+                "content": parsed["content"],
+                "level": level,
+            }
+        )
+        if len(entries) >= 50:
+            break
+
+    return jsonify(entries)
 
 
 if __name__ == "__main__":

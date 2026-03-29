@@ -379,3 +379,120 @@ body {
   font-weight: 400;
   margin-left: 4px;
 }
+
+/* ========================================
+   Conversation History Panel
+   ======================================== */
+
+#conv-toggle {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #e6edf3;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  margin-left: 8px;
+}
+
+#conv-toggle:hover {
+  background: #30363d;
+  border-color: #484f58;
+}
+
+#conv-toggle.active {
+  background: #10a37f22;
+  border-color: #10a37f;
+  color: #10a37f;
+}
+
+#conversation-panel {
+  position: fixed;
+  top: 44px;
+  right: 0;
+  width: 400px;
+  height: calc(100vh - 44px);
+  background: #0d1117;
+  border-left: 1px solid #30363d;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#conversation-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.conv-entry {
+  padding: 8px 12px;
+  border-bottom: 1px solid #21262d;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.conv-entry:hover {
+  background: #161b22;
+}
+
+.conv-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.conv-time {
+  font-size: 10px;
+  color: #484f58;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.conv-type-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.conv-type-tool .conv-type-badge   { background: #d2992222; color: #d29922; }
+.conv-type-response .conv-type-badge { background: #3fb95022; color: #3fb950; }
+.conv-type-user .conv-type-badge   { background: #1f6feb22; color: #58a6ff; }
+.conv-type-error .conv-type-badge  { background: #f8514922; color: #f85149; }
+.conv-type-info .conv-type-badge   { background: #8b949e22; color: #8b949e; }
+
+.conv-content {
+  color: #c9d1d9;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.conv-entry.collapsed .conv-content {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-height: 1.5em;
+}
+
+.conv-entry .conv-expand-hint {
+  font-size: 9px;
+  color: #484f58;
+  margin-top: 2px;
+  display: none;
+}
+
+.conv-entry.collapsed .conv-expand-hint {
+  display: block;
+}
