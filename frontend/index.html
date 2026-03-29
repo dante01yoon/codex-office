@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codex Office</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Header -->
+  <div id="header">
+    <div class="logo">
+      <span class="dot"></span>
+      Codex Office
+    </div>
+    <div class="stats">
+      <span>Agents: <span class="stat-value" id="stat-total">0</span></span>
+      <span>Coding: <span class="stat-value" id="stat-coding">0</span></span>
+      <span>Thinking: <span class="stat-value" id="stat-thinking">0</span></span>
+      <span>Idle: <span class="stat-value" id="stat-idle">0</span></span>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div id="main">
+    <!-- Game Canvas -->
+    <div id="game-container"></div>
+
+    <!-- Sidebar -->
+    <div id="sidebar">
+      <!-- Agent List -->
+      <div id="agent-panel" class="panel">
+        <div class="panel-header">Agents Online</div>
+        <div id="agent-list">
+          <div class="empty-state">
+            No agents online.<br>
+            Start a Codex process to see it here!
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Log -->
+      <div id="log-panel" class="panel">
+        <div class="panel-header">Activity Log</div>
+        <div id="activity-log">
+          <div class="empty-state">No activity yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phaser 3 (CDN, no build step) -->
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+
+  <!-- Our scripts (order matters) -->
+  <script src="layout.js"></script>
+  <script src="sprites.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

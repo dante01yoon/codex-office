@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+backend/agents.json
+.DS_Store
+*.sqlite
+*.log
