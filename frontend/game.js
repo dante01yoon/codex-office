@@ -243,9 +243,9 @@ class OfficeScene extends Phaser.Scene {
     const wg = this.add.graphics();
     wg.setDepth(DEPTH.furnitureBg);
 
-    // Frame
+    // Frame (slightly thicker for larger board)
     wg.fillStyle(COLORS.whiteboardFrame);
-    wg.fillRect(wb.x - 3, wb.y - 3, wb.w + 6, wb.h + 6);
+    wg.fillRect(wb.x - 4, wb.y - 4, wb.w + 8, wb.h + 8);
 
     // Board surface
     wg.fillStyle(COLORS.whiteboard);
@@ -269,6 +269,9 @@ class OfficeScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-TWO',   () => WhiteboardManager.setMode(1));
     this.input.keyboard.on('keydown-THREE', () => WhiteboardManager.setMode(2));
     this.input.keyboard.on('keydown-FOUR',  () => WhiteboardManager.setMode(3));
+
+    // W key toggles the expanded whiteboard panel
+    this.input.keyboard.on('keydown-W', () => toggleWhiteboardPanel());
   }
 
   drawServerRack(g) {
@@ -769,7 +772,13 @@ class OfficeScene extends Phaser.Scene {
       const res = await fetch('http://localhost:19000/whiteboard');
       if (!res.ok) return;
       const data = await res.json();
+      this.whiteboardData = data;
       WhiteboardManager.render(WhiteboardManager.currentMode, data);
+
+      // Also update the expanded panel if visible
+      if (whiteboardPanelVisible && WhiteboardPanel.ctx) {
+        WhiteboardPanel.render(WhiteboardPanel.currentMode, data);
+      }
     } catch (e) {
       // Server not running or endpoint unavailable, silently ignore
     }
