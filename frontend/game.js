@@ -47,6 +47,15 @@ class OfficeScene extends Phaser.Scene {
 
     // Initial poll
     this.pollAgents();
+
+    // Start git status polling (every 15s)
+    this.pollGitStatus();
+    this.gitPollTimer = this.time.addEvent({
+      delay: 15000,
+      callback: this.pollGitStatus,
+      callbackScope: this,
+      loop: true,
+    });
   }
 
   update(time) {
@@ -1227,6 +1236,70 @@ class OfficeScene extends Phaser.Scene {
         <span class="log-task">${entry.task || ''}</span>
       </div>
     `).join('');
+  }
+
+  // ========================================
+  // Git Status Polling
+  // ========================================
+
+  async pollGitStatus() {
+    try {
+      const res = await fetch('http://localhost:19000/git-status');
+      if (!res.ok) return;
+      const data = await res.json();
+      this.updateGitPanel(data);
+    } catch (e) {
+      // Server not running or endpoint unavailable, silently ignore
+    }
+  }
+
+  updateGitPanel(data) {
+    const el = document.getElementById('git-status');
+    if (!el) return;
+
+    if (data.error) {
+      el.innerHTML = `<div class="empty-state">${data.error}</div>`;
+      return;
+    }
+
+    let html = '';
+
+    // Branch name
+    if (data.branch) {
+      html += `<div class="git-branch">${data.branch}</div>`;
+    }
+
+    // Changed files
+    if (data.files && data.files.length > 0) {
+      html += '<div class="git-section-label">Changes</div>';
+      const statusIcon = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R', untracked: '?', copied: 'C' };
+      data.files.forEach(f => {
+        const icon = statusIcon[f.status] || 'M';
+        html += `
+          <div class="git-file">
+            <span class="git-file-status ${f.status}">${icon}</span>
+            <span class="git-file-path" title="${f.path}">${f.path}</span>
+          </div>`;
+      });
+    }
+
+    // Recent commits
+    if (data.commits && data.commits.length > 0) {
+      html += '<div class="git-section-label">Recent Commits</div>';
+      data.commits.forEach(c => {
+        html += `
+          <div class="git-commit">
+            <span class="git-hash">${c.hash}</span>
+            <span class="git-msg" title="${c.message}">${c.message}</span>
+          </div>`;
+      });
+    }
+
+    if (!html) {
+      html = '<div class="empty-state">No git info</div>';
+    }
+
+    el.innerHTML = html;
   }
 }
 
