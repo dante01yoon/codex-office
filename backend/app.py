@@ -357,6 +357,106 @@ def get_conversation():
     return jsonify(entries)
 
 
+@app.route("/whiteboard", methods=["GET"])
+def get_whiteboard():
+    """Return combined whiteboard data for all display modes in one call."""
+    agents = load_agents()
+    if cleanup_stale_agents(agents):
+        save_agents(agents)
+
+    # --- timeline ---
+    timeline = [
+        {
+            "id": a["id"],
+            "state": a.get("state", "idle"),
+            "joined": a.get("joined", 0),
+            "last_update": a.get("last_update", 0),
+        }
+        for a in agents
+    ]
+
+    # --- tool_usage: count last 200 log entries by type from logs_1.sqlite ---
+    type_counts = {"tool": 0, "user": 0, "response": 0, "info": 0, "error": 0}
+    thread_id = None
+    if STATE_DB.exists():
+        try:
+            conn = sqlite3.connect(
+                f"file:{STATE_DB}?mode=ro", uri=True, timeout=3
+            )
+            row = conn.execute(
+                "SELECT id FROM threads WHERE archived = 0 "
+                "ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+            conn.close()
+            if row:
+                thread_id = row[0]
+        except (sqlite3.Error, OSError):
+            pass
+
+    if thread_id and LOGS_DB.exists():
+        try:
+            conn = sqlite3.connect(
+                f"file:{LOGS_DB}?mode=ro", uri=True, timeout=3
+            )
+            rows = conn.execute(
+                "SELECT ts, level, target, feedback_log_body "
+                "FROM logs "
+                "WHERE thread_id = ? AND feedback_log_body IS NOT NULL "
+                "ORDER BY ts DESC, id DESC "
+                "LIMIT 200",
+                (thread_id,),
+            ).fetchall()
+            conn.close()
+            for _ts, level, _target, body in rows:
+                parsed = _parse_log_body(body, level)
+                if parsed and parsed["type"] in type_counts:
+                    type_counts[parsed["type"]] += 1
+        except (sqlite3.Error, OSError):
+            pass
+
+    # --- org_chart ---
+    org_agents = []
+    for a in agents:
+        entry = {
+            "id": a["id"],
+            "is_subagent": a.get("is_subagent", False),
+        }
+        if a.get("is_subagent"):
+            entry["parent_id"] = a.get("parent_id", "")
+            entry["role"] = a.get("agent_role", "")
+        # Build children list: agents whose parent_id matches this agent's id
+        children = [
+            other["id"]
+            for other in agents
+            if other.get("parent_id") == a["id"] and other.get("is_subagent")
+        ]
+        if children:
+            entry["children"] = children
+        org_agents.append(entry)
+
+    boss_name = "Codex Boss"
+    org_chart = {"boss": boss_name, "agents": org_agents}
+
+    # --- news: last 10 activity log entries formatted as headlines ---
+    news = []
+    for entry in activity_log[:10]:
+        headline = f"{entry['agent_id']} {entry['state']}"
+        if entry.get("task"):
+            headline += f" - {entry['task']}"
+        news.append({
+            "time": entry["time"],
+            "headline": headline,
+            "type": entry["state"],
+        })
+
+    return jsonify({
+        "timeline": timeline,
+        "tool_usage": type_counts,
+        "org_chart": org_chart,
+        "news": news,
+    })
+
+
 @app.route("/context-usage", methods=["GET"])
 def context_usage():
     """Return context window utilization for the most recent active thread."""
