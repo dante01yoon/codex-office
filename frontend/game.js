@@ -1551,6 +1551,100 @@ async function focusAgent(agentId) {
 }
 
 // ========================================
+// Conversation History Panel
+// ========================================
+
+let conversationVisible = false;
+let conversationPollTimer = null;
+
+function toggleConversation() {
+  conversationVisible = !conversationVisible;
+  const panel = document.getElementById('conversation-panel');
+  const btn = document.getElementById('conv-toggle');
+
+  if (panel) {
+    panel.style.display = conversationVisible ? 'flex' : 'none';
+  }
+  if (btn) {
+    btn.classList.toggle('active', conversationVisible);
+  }
+
+  if (conversationVisible) {
+    pollConversation();
+    if (!conversationPollTimer) {
+      conversationPollTimer = setInterval(pollConversation, 5000);
+    }
+  } else {
+    if (conversationPollTimer) {
+      clearInterval(conversationPollTimer);
+      conversationPollTimer = null;
+    }
+  }
+}
+
+async function pollConversation() {
+  if (!conversationVisible) return;
+  try {
+    const res = await fetch('http://localhost:19000/conversation');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      updateConversation(data);
+    }
+  } catch (e) {
+    // Server not reachable
+  }
+}
+
+function updateConversation(data) {
+  const el = document.getElementById('conversation-list');
+  if (!el) return;
+
+  if (!data || data.length === 0) {
+    el.innerHTML = '<div class="empty-state">No conversation data.<br>Start a Codex session to see events here.</div>';
+    return;
+  }
+
+  const typeLabels = {
+    tool: 'Tool',
+    response: 'Response',
+    user: 'User',
+    error: 'Error',
+    info: 'Info',
+  };
+
+  el.innerHTML = data.map((entry, i) => {
+    const typeClass = `conv-type-${entry.type || 'info'}`;
+    const label = typeLabels[entry.type] || 'Info';
+    const content = escapeHtml(entry.content || '');
+    const needsCollapse = content.length > 120;
+    const collapseClass = needsCollapse ? ' collapsed' : '';
+
+    return `
+      <div class="conv-entry ${typeClass}${collapseClass}" onclick="toggleConvEntry(this)">
+        <div class="conv-entry-header">
+          <span class="conv-time">${entry.time || ''}</span>
+          <span class="conv-type-badge">${label}</span>
+        </div>
+        <div class="conv-content">${content}</div>
+        ${needsCollapse ? '<div class="conv-expand-hint">Click to expand</div>' : ''}
+      </div>`;
+  }).join('');
+}
+
+function toggleConvEntry(el) {
+  if (el) {
+    el.classList.toggle('collapsed');
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// ========================================
 // Initialize Phaser
 // ========================================
 

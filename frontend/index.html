@@ -21,6 +21,7 @@
       <span>Thinking: <span class="stat-value" id="stat-thinking">0</span></span>
       <span>Idle: <span class="stat-value" id="stat-idle">0</span></span>
       <span>Sub: <span class="stat-value" id="stat-subagents">0</span></span>
+      <button id="conv-toggle" onclick="toggleConversation()">Chat</button>
     </div>
   </div>
 
@@ -56,6 +57,12 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Conversation History Panel -->
+  <div id="conversation-panel" style="display:none">
+    <div class="panel-header">Conversation <button onclick="toggleConversation()" style="float:right;background:none;border:none;color:#8b949e;cursor:pointer">&#10005;</button></div>
+    <div id="conversation-list"></div>
   </div>
 
   <!-- Phaser 3 (CDN, no build step) -->
