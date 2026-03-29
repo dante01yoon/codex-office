@@ -133,7 +133,7 @@ const FURNITURE = {
     { x: 1180, y: 520 },
   ],
   serverRack: { x: 1000, y: 120, w: 180, h: 100 },
-  whiteboard: { x: 460, y: 100, w: 200, h: 80 },
+  whiteboard: { x: 400, y: 80, w: 320, h: 140 },
   window: { x: 100, y: 80, w: 240, h: 120 },
   clock: { x: 780, y: 100 },
   door: { x: 830, y: 600 },
