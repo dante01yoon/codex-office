@@ -758,6 +758,44 @@ class OfficeScene extends Phaser.Scene {
   moveAgentTo(agent, x, y, onComplete) {
     agent.isMoving = true;
 
+    // Try A* pathfinding for obstacle-aware movement
+    const waypoints = Pathfinder.findPath(agent.sprite.x, agent.sprite.y, x, y);
+
+    if (waypoints && waypoints.length > 0) {
+      this._followWaypoints(agent, waypoints, 0, onComplete);
+    } else {
+      // Fallback: direct tween if pathfinding fails
+      this._tweenAgentTo(agent, x, y, onComplete);
+    }
+  }
+
+  /**
+   * Chain tweens through an array of waypoints from pathfinding.
+   */
+  _followWaypoints(agent, waypoints, index, onComplete) {
+    if (index >= waypoints.length) {
+      agent.isMoving = false;
+      if (onComplete) onComplete();
+      return;
+    }
+
+    const wp = waypoints[index];
+    const isLast = index === waypoints.length - 1;
+
+    this._tweenAgentTo(agent, wp.x, wp.y, () => {
+      if (isLast) {
+        agent.isMoving = false;
+        if (onComplete) onComplete();
+      } else {
+        this._followWaypoints(agent, waypoints, index + 1, onComplete);
+      }
+    });
+  }
+
+  /**
+   * Low-level tween that moves an agent sprite to a single (x, y) point.
+   */
+  _tweenAgentTo(agent, x, y, onComplete) {
     // Flip sprite based on direction
     if (x < agent.sprite.x) {
       agent.sprite.setFlipX(true);
@@ -766,7 +804,7 @@ class OfficeScene extends Phaser.Scene {
     }
 
     const distance = Phaser.Math.Distance.Between(agent.sprite.x, agent.sprite.y, x, y);
-    const duration = Math.max(400, distance * 3);
+    const duration = Math.max(200, distance * 3);
 
     this.tweens.add({
       targets: agent.sprite,
@@ -786,7 +824,6 @@ class OfficeScene extends Phaser.Scene {
         agent.sprite.setDepth(DEPTH.characters + agent.sprite.y * 0.1);
       },
       onComplete: () => {
-        agent.isMoving = false;
         if (onComplete) onComplete();
       },
     });
